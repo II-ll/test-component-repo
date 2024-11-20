@@ -1,0 +1,69 @@
+name: REPLACE_TEMPLATE_VARIABLES
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  replace-variables:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up variables
+        id: generate
+        run: |
+          # Extract repository name from the environment
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+
+          # Generate the prefix: initials + Unix timestamp
+          PREFIX=$(echo "$REPO_NAME" | awk -F'-' '{for (i=1;i<=NF;i++) printf substr($i,1,1)}')
+          TIMESTAMP=$(date +%s)
+          PREFIX="${PREFIX}_${TIMESTAMP}"
+
+          # Generate the ID: CamelCase format of the repo name
+          ID=$(echo "$REPO_NAME" | awk -F'-' '{for (i=1;i<=NF;i++) printf toupper(substr($i,1,1)) substr($i,2)}')
+
+          # Output as environment variables
+          echo "PREFIX=$PREFIX"
+          echo "ID=$ID"
+          echo "::set-output name=prefix::$PREFIX"
+          echo "::set-output name=id::$ID"
+
+
+      - name: Rename directories, files, and update content
+        run: |
+          # Fetch validated inputs
+          PREFIX=${{ steps.generate.outputs.prefix }}
+          ID=${{ steps.generate.outputs.id }}
+
+          echo "Using PREFIX=$PREFIX and ID=$ID"
+
+          find . -type f ! -name 'replace_template_vars.yml' -exec bash -c 'sed -i "s/{{component_id}}/$ID/g" "$0"' {} \;
+          find . -type f ! -name 'replace_template_vars.yml' -exec bash -c 'sed -i "s/{{component_prefix}}/$PREFIX/g" "$0"' {} \;
+          find . -type f ! -name 'replace_template_vars.yml' -exec bash -c 'sed -i "s/{{repo_name}}/$REPO_NAME/g" "$0"' {} \;
+          
+
+          # Rename files and directories with variables
+          find . -depth -name '*{{component_prefix}}*' -execdir bash -c 'mv "$1" "${1//\{\{component_prefix\}\}/$2}"' _ {} "$PREFIX" \;
+          find . -depth -name '*{{component_id}}*' -execdir bash -c 'mv "$1" "${1//{\{\component_id\}\}/$2}"' _ {} "$ID" \;
+
+      - name: Clear and Rebuid Git Index
+        run: |
+          echo "Clearing Git index"
+          rm -f .git/index
+          git reset
+      
+      - name: Commit changes
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Replaced Template Variables"
+          git push
